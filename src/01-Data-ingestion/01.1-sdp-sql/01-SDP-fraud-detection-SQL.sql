@@ -1,0 +1,45 @@
+-- Databricks notebook source
+-- MAGIC %md-sandbox
+-- MAGIC # SDP Pipeline for FSI Fraud Detection
+-- MAGIC
+-- MAGIC This notebook describes the Spark Declarative Pipeline (SDP) used to ingest and transform banking transaction data through the medallion architecture (Bronze → Silver → Gold).
+-- MAGIC
+-- MAGIC ## Pipeline Architecture
+-- MAGIC
+-- MAGIC The SDP pipeline is defined in the `transformations/` folder:
+-- MAGIC - **01-bronze.sql**: Ingest raw data from Unity Catalog volumes (transactions, customers, countries, fraud reports)
+-- MAGIC - **02-silver.sql**: Clean data, calculate balance diffs, join with fraud labels
+-- MAGIC - **03-gold.sql**: Create enriched, ML-ready dataset with geographic features
+-- MAGIC
+-- MAGIC ## Deployment via DABs
+-- MAGIC
+-- MAGIC This pipeline is deployed as a DABs resource defined in `resources/fsi_fraud_pipeline.yml`.
+-- MAGIC The pipeline's catalog, schema, and volume paths are parameterized via bundle variables.
+-- MAGIC
+-- MAGIC **Primary SDP variant**: Python (`01.2-sdp-python/`) — fully parameterized via `spark.conf`.
+-- MAGIC **Reference SDP variant**: SQL (`01.1-sdp-sql/`) — uses pipeline configuration variable substitution.
+
+-- COMMAND ----------
+
+-- MAGIC %md
+-- MAGIC ## Data Flow
+-- MAGIC
+-- MAGIC ```
+-- MAGIC Raw Data (UC Volumes)
+-- MAGIC ├── transactions (JSON)
+-- MAGIC ├── customers (CSV)
+-- MAGIC ├── country_code (CSV)
+-- MAGIC └── fraud_report (CSV)
+-- MAGIC     ↓
+-- MAGIC BRONZE (streaming tables)
+-- MAGIC ├── bronze_transactions
+-- MAGIC ├── banking_customers
+-- MAGIC ├── country_coordinates
+-- MAGIC └── fraud_reports
+-- MAGIC     ↓
+-- MAGIC SILVER (streaming table)
+-- MAGIC └── silver_transactions (cleaned, validated, joined)
+-- MAGIC     ↓
+-- MAGIC GOLD (materialized view)
+-- MAGIC └── gold_transactions (enriched, ML-ready)
+-- MAGIC ```

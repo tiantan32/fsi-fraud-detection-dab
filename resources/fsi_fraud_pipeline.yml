@@ -1,0 +1,23 @@
+resources:
+  pipelines:
+    fsi_fraud_sdp:
+      name: "fsi_fraud_sdp_${bundle.target}"
+      catalog: ${var.catalog}
+      target: ${var.schema}
+      development: true
+      continuous: false
+      channel: PREVIEW
+      edition: ADVANCED
+      photon: false
+      serverless: true
+      libraries:
+        - notebook:
+            path: ../src/01-Data-ingestion/01.2-sdp-python/transformations/01-bronze.py
+        - notebook:
+            path: ../src/01-Data-ingestion/01.2-sdp-python/transformations/02-silver.py
+        - notebook:
+            path: ../src/01-Data-ingestion/01.2-sdp-python/transformations/03-gold.py
+      configuration:
+        catalog_name: ${var.catalog}
+        schema_name: ${var.schema}
+        volume_name: ${var.volume_name}

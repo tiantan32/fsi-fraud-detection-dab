@@ -1,0 +1,214 @@
+resources:
+  jobs:
+    # =========================================================================
+    # Job 1: Data Setup — Ingest raw data and run SDP pipeline
+    # =========================================================================
+    fsi_fraud_data_setup:
+      name: "fsi_fraud_data_setup_${bundle.target}"
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: init_data
+          max_retries: 0
+          notebook_task:
+            notebook_path: ../src/_resources/00-setup.py
+            base_parameters:
+              reset_all_data: "false"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+        - task_key: start_sdp_pipeline
+          depends_on:
+            - task_key: init_data
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.fsi_fraud_sdp.id}
+            full_refresh: false
+
+      environments:
+        - environment_key: serverless_env
+          spec:
+            client: "4"
+
+    # =========================================================================
+    # Job 2: MLOps Pipeline
+    # =========================================================================
+    fsi_fraud_mlops:
+      name: "fsi_fraud_mlops_${bundle.target}"
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: feature_engineering
+          max_retries: 0
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/01_feature_engineering.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+        - task_key: model_training
+          max_retries: 0
+          depends_on:
+            - task_key: feature_engineering
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/02_model_training_hpo.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+        - task_key: register_model
+          max_retries: 0
+          depends_on:
+            - task_key: model_training
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/03_model_registration.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+        - task_key: validate_model
+          max_retries: 0
+          depends_on:
+            - task_key: register_model
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/04_challenger_validation.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+        - task_key: batch_inference
+          max_retries: 0
+          depends_on:
+            - task_key: validate_model
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/05_batch_inference.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+        - task_key: deploy_serving
+          max_retries: 0
+          depends_on:
+            - task_key: validate_model
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/06_realtime_serving.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+        - task_key: setup_monitoring
+          max_retries: 0
+          depends_on:
+            - task_key: batch_inference
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/07_model_monitoring.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+      environments:
+        - environment_key: serverless_env
+          spec:
+            client: "4"
+
+    # =========================================================================
+    # Job 3: Monitoring & Retraining (Scheduled)
+    # =========================================================================
+    fsi_fraud_monitor_retrain:
+      name: "fsi_fraud_monitor_retrain_${bundle.target}"
+      max_concurrent_runs: 1
+      # schedule:
+      #   quartz_cron_expression: "0 0 */6 * * ?"
+      #   timezone_id: "UTC"
+      tasks:
+        - task_key: refresh_pipeline
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.fsi_fraud_sdp.id}
+            full_refresh: false
+
+        - task_key: batch_inference
+          max_retries: 0
+          depends_on:
+            - task_key: refresh_pipeline
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/05_batch_inference.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+        - task_key: drift_detection
+          max_retries: 0
+          depends_on:
+            - task_key: batch_inference
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/08_drift_detection.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+        - task_key: check_violations
+          depends_on:
+            - task_key: drift_detection
+          condition_task:
+            op: GREATER_THAN
+            left: "{{tasks.drift_detection.values.total_violations}}"
+            right: "0"
+
+        - task_key: retrain_model
+          max_retries: 0
+          depends_on:
+            - task_key: check_violations
+              outcome: "true"
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/02_model_training_hpo.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+        - task_key: reregister_model
+          max_retries: 0
+          depends_on:
+            - task_key: retrain_model
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/03_model_registration.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+        - task_key: revalidate_model
+          max_retries: 0
+          depends_on:
+            - task_key: reregister_model
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/04_challenger_validation.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+      environments:
+        - environment_key: serverless_env
+          spec:
+            client: "4"

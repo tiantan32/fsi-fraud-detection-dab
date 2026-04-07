@@ -1,0 +1,48 @@
+bundle:
+  name: fsi-fraud-detection
+
+variables:
+  catalog:
+    description: Unity Catalog name for all tables, models, and volumes
+    default: main
+  schema:
+    description: Schema (database) name within the catalog
+    default: dbdemos_fsi_fraud_detection
+  volume_name:
+    description: Volume name for raw data storage
+    default: fraud_raw_data
+  warehouse_id:
+    description: SQL Warehouse ID for dashboard queries
+    default: ""
+
+workspace:
+  root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+
+sync:
+  include:
+    - "src/**"
+    - "dashboards/**"
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+    variables:
+      catalog: ttan_demo_catalog_main
+      schema: fsi_fraud_detection
+
+  staging:
+    variables:
+      catalog: ttan_demo_catalog_main
+      schema: fsi_fraud_detection_staging
+
+  prod:
+    mode: production
+    variables:
+      catalog: ttan_demo_catalog_main
+      schema: fsi_fraud_detection
+    run_as:
+      service_principal_name: ${workspace.current_user.userName}

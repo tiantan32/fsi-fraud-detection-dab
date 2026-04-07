@@ -1,0 +1,45 @@
+-- Databricks notebook source
+-- MAGIC %md-sandbox
+-- MAGIC
+-- MAGIC # Your Lakehouse is the best Warehouse
+-- MAGIC
+-- MAGIC Traditional Data Warehouses can't keep up with the variety of data and use cases. Business agility requires reliable, real-time data, with insight from ML models.
+-- MAGIC
+-- MAGIC Working with the lakehouse unlocks traditional BI analysis but also real time applications having a direct connection to your entire data, while remaining fully secured.
+-- MAGIC
+-- MAGIC <br>
+-- MAGIC
+-- MAGIC <img src="https://github.com/databricks-demos/dbdemos-resources/raw/main/images/dbsql.png" width="700px" style="float: left" />
+-- MAGIC
+-- MAGIC <div style="float: left; margin-top: 240px; font-size: 23px">
+-- MAGIC   Instant, elastic compute<br>
+-- MAGIC   Lower TCO with Serverless<br>
+-- MAGIC   Zero management<br><br>
+-- MAGIC
+-- MAGIC   Governance layer - row level<br><br>
+-- MAGIC
+-- MAGIC   Your data. Your schema (star, data vault...)
+-- MAGIC </div>
+
+-- COMMAND ----------
+
+-- MAGIC %md-sandbox
+-- MAGIC # BI & Datawarehousing with Databricks SQL
+-- MAGIC
+-- MAGIC <img style="float: right; margin-top: 10px" width="500px" src="https://raw.githubusercontent.com/databricks-demos/dbdemos-resources/main/images/fsi/fraud-detection/lakehouse-fsi-fraud-overview-3.png" />
+-- MAGIC
+-- MAGIC Our datasets are now properly ingested, secured, with high quality and easily discoverable within our organization.
+-- MAGIC
+-- MAGIC Let's explore how Databricks SQL supports your data analyst team with interactive BI and start analyzing our transactions and fraud.
+-- MAGIC
+-- MAGIC ## Dashboard
+-- MAGIC
+-- MAGIC A Lakeview dashboard is included in this bundle at `dashboards/fraud-detection.lvdash.json`.
+-- MAGIC It is deployed alongside the notebooks when you run `databricks bundle deploy`.
+
+-- COMMAND ----------
+
+-- MAGIC %md
+-- MAGIC # Next: Detecting Fraud with ML
+-- MAGIC
+-- MAGIC Let's see how this can be done with [Databricks Machine Learning notebook]($../04-Data-Science-ML/04.1-AutoML-FSI-fraud) | [Go back to the introduction]($../00-FSI-fraud-detection-introduction-lakehouse)
