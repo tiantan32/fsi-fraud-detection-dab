@@ -10,7 +10,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install --quiet databricks-feature-engineering>=0.13.0a8 mlflow --upgrade lightgbm xgboost optuna
+# MAGIC %pip install --quiet databricks-feature-engineering>=0.13.0a8 mlflow --upgrade lightgbm "xgboost<2.1" optuna
 # MAGIC %restart_python
 
 # COMMAND ----------
