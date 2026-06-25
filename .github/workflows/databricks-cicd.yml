@@ -121,6 +121,8 @@ jobs:
       - uses: databricks/setup-cli@main
       - run: databricks bundle validate --target staging
       - run: databricks bundle deploy --target staging
+      - name: Bootstrap source data (idempotent — runs 00-setup + SDP pipeline)
+        run: databricks bundle run fsi_fraud_data_setup --target staging
       - name: Trigger mlops job (staging smoke run)
         run: databricks bundle run fsi_fraud_mlops --target staging
 
