@@ -29,7 +29,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install --quiet mlflow shap==0.46.* lightgbm xgboost
+# MAGIC %pip install --quiet databricks-feature-engineering>=0.13.0a8 mlflow shap==0.46.* lightgbm xgboost
 # MAGIC %restart_python
 
 # COMMAND ----------

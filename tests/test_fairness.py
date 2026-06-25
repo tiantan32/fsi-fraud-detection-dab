@@ -20,7 +20,6 @@ from lib.fairness import (
     worst_disparate_impact,
 )
 
-
 # ----------------------------- group_metrics -----------------------------
 
 def test_group_metrics_perfect_classifier():
