@@ -43,10 +43,10 @@ targets:
 
   staging:
     workspace:
-      host: https://fe-vm-ttan-vm.cloud.databricks.com
+      host: https://fevm-serverless-stable-wx91kl.cloud.databricks.com
     variables:
-      catalog: ttan_demo_catalog_main
-      schema: fsi_fraud_detection_staging
+      catalog: ttan_demo_catalog_staging
+      schema: fsi_fraud_detection
 
   prod:
     mode: production
