@@ -2,4 +2,14 @@
 *.pyc
 __pycache__/
 .databricks/
-test_*.py
+.venv/
+.venv-dbt/
+.venv-test/
+.pytest_cache/
+.ruff_cache/
+# Ignore ad-hoc smoke-test scripts in the repo root, but NOT the tests/ tree
+/test_*.py
+# Editable install build artifact
+*.egg-info/
+.vscode/
+MEMORY.md

@@ -93,24 +93,31 @@ fe = FeatureEngineeringClient()
 
 feature_table_name = f"{catalog}.{db}.fraud_feature_table"
 
-# Drop existing table if it exists (for clean demo setup)
+# DO NOT drop + recreate the feature table on each run. Doing so gives it a
+# new UC table_id, which orphans the downstream synced (Lakebase-backed)
+# online table — that synced table is bound to a specific source table_id
+# and silently syncs 0 rows after a drop+create, breaking realtime serving
+# with: "No suitable online store found for feature table ...".
+#
+# Idempotent pattern: create-if-missing, then MERGE the new feature rows.
+# Delta history (and the synced-table binding) is preserved across runs.
 try:
-    fe.drop_table(name=feature_table_name)
-except:
-    pass
-
-fe.create_table(
-    name=feature_table_name,
-    primary_keys=["transaction_id", "event_ts"],
-    timestamp_keys=["event_ts"],
-    schema=features_df.schema,
-    description="Transaction features for fraud detection. Includes balance ratios, geographic risk indicators, and engineered signals."
-)
+    fe.get_table(name=feature_table_name)
+    print(f"Feature table {feature_table_name} exists; merging new rows.")
+except Exception:
+    print(f"Feature table {feature_table_name} does not exist; creating.")
+    fe.create_table(
+        name=feature_table_name,
+        primary_keys=["transaction_id", "event_ts"],
+        timestamp_keys=["event_ts"],
+        schema=features_df.schema,
+        description="Transaction features for fraud detection. Includes balance ratios, geographic risk indicators, and engineered signals.",
+    )
 
 fe.write_table(
     name=feature_table_name,
     df=features_df,
-    mode="merge"
+    mode="merge",
 )
 
 display(fe.read_table(name=feature_table_name).limit(5))

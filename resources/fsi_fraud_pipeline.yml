@@ -4,7 +4,12 @@ resources:
       name: "fsi_fraud_sdp_${bundle.target}"
       catalog: ${var.catalog}
       target: ${var.schema}
-      development: true
+      # `development: true` is overridden per target below (true in dev/staging,
+      # false in prod) — keeping it true at the resource level would break
+      # `databricks bundle validate --target prod` with
+      #   "target with 'mode: production' cannot include a pipeline with
+      #    'development: true'"
+      development: false
       continuous: false
       channel: PREVIEW
       edition: ADVANCED

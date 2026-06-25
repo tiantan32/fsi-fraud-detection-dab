@@ -135,13 +135,22 @@ client.set_model_version_tag(name=model_name, version=model_version, key="has_ar
 model_run_id = model_details.run_id
 f1_score = mlflow.get_run(model_run_id).data.metrics['test_f1_score']
 
+# Tolerance for HPO variance: Challenger passes if F1 is within 5% of Champion.
+# Strict `>=` rejects on noise (e.g., 0.001 regression from sampling). A
+# production policy might set this from a CI bootstrap over training folds.
+F1_TOLERANCE_PCT = 0.05
+
 try:
     champion_model = client.get_model_version_by_alias(model_name, "Champion")
     champion_f1 = mlflow.get_run(champion_model.run_id).data.metrics['test_f1_score']
-    print(f"Champion f1 score: {champion_f1}. Challenger f1 score: {f1_score}.")
-    metric_f1_passed = f1_score >= champion_f1
-except:
-    print("No Champion found. Accept the model as it's the first one.")
+    f1_floor = champion_f1 * (1 - F1_TOLERANCE_PCT)
+    print(
+        f"Champion f1={champion_f1:.4f}, Challenger f1={f1_score:.4f}, "
+        f"floor (within {F1_TOLERANCE_PCT:.0%})={f1_floor:.4f}"
+    )
+    metric_f1_passed = f1_score >= f1_floor
+except Exception as e:
+    print(f"No Champion found ({e}). Accept the model as it's the first one.")
     metric_f1_passed = True
 
 print(f"Model {model_name} version {model_details.version} metric_f1_passed: {metric_f1_passed}")
@@ -210,18 +219,59 @@ print("Tags:", results.tags)
 
 # COMMAND ----------
 
-if metric_f1_passed and has_artifacts and has_description and predicts_check and business_metric_passed:
-    print(f"Registering model {model_name} Version {model_version} as Champion!")
+# Pull the fairness tag set upstream by 09_explainability_fairness. If the
+# task didn't run yet (e.g. first deploy), treat as Failed so the gate does
+# not silently waive bias review.
+_fairness_tag = client.get_model_version(model_name, model_version).tags.get("Fairness_Check", "Missing")
+fairness_passed = (_fairness_tag.lower() == "passed")
+print(f"Fairness_Check tag = {_fairness_tag}  fairness_passed = {fairness_passed}")
+
+all_automated_checks_passed = (
+    metric_f1_passed and has_artifacts and has_description
+    and predicts_check and business_metric_passed
+    and fairness_passed
+)
+
+# The human-in-the-loop gate is at the GitHub Actions level (the `prod`
+# Environment requires reviewer sign-off before bundle deploy). Inside the
+# deployed bundle, the mlops job runs end-to-end autonomously: if all
+# automated checks pass (metrics + fairness + business KPI), promote to
+# Champion. If any check fails, halt the DAG so deploy_serving / batch
+# inference do not get the new model.
+if all_automated_checks_passed:
+    print(f"All automated checks passed. Promoting {model_name} v{model_version} to @Champion.")
     client.set_registered_model_alias(
-        name=model_name,
-        alias="Champion",
-        version=model_version,
+        name=model_name, alias="Champion", version=model_version,
     )
-    client.set_model_version_tag(name=model_name, version=model_details.version, key="Approval_Check", value="Approved")
+    client.set_model_version_tag(
+        name=model_name, version=model_details.version,
+        key="Approval_Check", value="Approved",
+    )
+    # Stamp who/when for audit lineage. The "who" is the service principal
+    # in prod (the job's run_as), which is exactly what regulators want to
+    # see paired with the GH Action approver in the deploy log.
+    import time
+    current_user = spark.sql("SELECT current_user()").first()[0]
+    client.set_model_version_tag(
+        name=model_name, version=model_details.version,
+        key="Promoted_To_Champion_By", value=current_user,
+    )
+    client.set_model_version_tag(
+        name=model_name, version=model_details.version,
+        key="Promoted_At_Epoch_S", value=str(int(time.time())),
+    )
 
 else:
-    client.set_model_version_tag(name=model_name, version=model_details.version, key="Approval_Check", value="Failed")
-    raise Exception(f"Model v{model_version} REJECTED: description={has_description}, predicts={predicts_check}, artifacts={has_artifacts}, f1={metric_f1_passed}, business={business_metric_passed}")
+    client.set_model_version_tag(
+        name=model_name, version=model_details.version,
+        key="Approval_Check", value="Failed",
+    )
+    raise Exception(
+        f"Model v{model_version} REJECTED: description={has_description}, "
+        f"predicts={predicts_check}, artifacts={has_artifacts}, "
+        f"f1={metric_f1_passed}, business={business_metric_passed}, "
+        f"fairness={fairness_passed}"
+    )
 
 # COMMAND ----------
 

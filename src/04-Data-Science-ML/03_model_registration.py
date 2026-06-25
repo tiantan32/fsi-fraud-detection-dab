@@ -109,6 +109,46 @@ client.update_model_version(
 # Tag with validation status
 client.set_model_version_tag(model_name, model_details.version, "validation_status", "invalid")
 
+# Copy fairness + SHAP outcomes from the upstream explainability_fairness task
+# onto the model version, so reviewers see them in Catalog Explorer without
+# having to open the MLflow run.
+try:
+    fairness_passed = dbutils.jobs.taskValues.get(
+        taskKey="explainability_fairness", key="fairness_passed"
+    )
+    calibration_di = dbutils.jobs.taskValues.get(
+        taskKey="explainability_fairness", key="calibration_di_ratio"
+    )
+    raw_di = dbutils.jobs.taskValues.get(
+        taskKey="explainability_fairness", key="raw_di_ratio"
+    )
+    client.set_model_version_tag(
+        model_name, model_details.version,
+        "Fairness_Check", "Passed" if fairness_passed == "true" else "Failed",
+    )
+    client.set_model_version_tag(
+        model_name, model_details.version,
+        "Calibration_DI_Ratio", str(calibration_di),
+    )
+    client.set_model_version_tag(
+        model_name, model_details.version,
+        "Raw_DI_Ratio", str(raw_di),
+    )
+    client.set_model_version_tag(
+        model_name, model_details.version, "Explainability", "SHAP",
+    )
+    print(
+        f"Stamped fairness tags: Fairness_Check={fairness_passed}, "
+        f"Calibration_DI={calibration_di}, Raw_DI={raw_di}"
+    )
+except Exception as e:
+    # If the explainability task didn't set values (e.g. interactive registration),
+    # mark fairness as Missing so validate_model can refuse to promote.
+    client.set_model_version_tag(
+        model_name, model_details.version, "Fairness_Check", "Missing",
+    )
+    print(f"No upstream fairness task values found ({e}); tagged Fairness_Check=Missing.")
+
 print(f"Model {model_name} v{model_details.version} set as @Challenger")
 
 # COMMAND ----------

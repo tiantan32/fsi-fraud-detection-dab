@@ -1,0 +1,43 @@
+[project]
+name = "fsi-fraud-detection-dab"
+version = "0.1.0"
+description = "FSI fraud detection — Databricks bundle (DABs)"
+requires-python = ">=3.10"
+
+# Runtime dependencies live on the Databricks cluster; these are ONLY the
+# packages the local unit tests need to import lib/ without a Spark session.
+[project.optional-dependencies]
+test = [
+    "pytest>=7.4",
+    "numpy>=1.26,<2",
+    "pandas>=2.1,<3",
+    "ruff>=0.4",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [
+    ".venv",
+    ".venv-dbt",
+    "dbt",
+    # Databricks notebooks include `# MAGIC` comments and `dbutils` references
+    # that don't pass standard lint; lint only the pure-Python lib.
+    "src/01-Data-ingestion",
+    "src/02-Data-governance",
+    "src/03-BI-data-warehousing",
+    "src/04-Data-Science-ML",
+    "src/05-Generative-AI",
+    "src/06-Workflow-orchestration",
+    "src/_resources",
+    "src/00-FSI-fraud-detection-introduction-lakehouse.sql",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP"]
+ignore = ["E501"]  # we already cap at 100; rely on formatter for the edges

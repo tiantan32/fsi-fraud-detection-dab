@@ -1,0 +1,150 @@
+name: fsi-fraud-detection CI/CD
+
+# Runner choice for Databricks IP ACL
+# ===================================
+# This workflow targets `fe-vm-ttan-vm.cloud.databricks.com`, whose IP ACL
+# blocks vanilla `ubuntu-latest` GitHub-hosted runners with HTTP 403.
+#
+# This repo lives in a personal namespace (`tiantan32/`), so the FE org's
+# IT-managed runner group (`databricks-field-eng-protected-runner-group`)
+# is NOT available here. We use a self-hosted runner with the label
+# `fsi-fraud-cicd`, registered on a host inside the workspace allowlist
+# (your Mac on Databricks VPN works).
+#
+# To switch to the FE IT-managed runners later (when the repo moves to
+# `databricks-field-eng`), replace each `runs-on: [self-hosted, fsi-fraud-cicd]`
+# with:
+#   runs-on:
+#     group: databricks-field-eng-protected-runner-group
+#     labels: linux-ubuntu-latest
+#
+# Self-hosted runner setup: see scripts/setup-self-hosted-runner.md.
+#
+# Gates:
+#   PR open/update  -> lint + pytest + bundle validate on staging   (no deploy)
+#   PR merge to main -> deploy + smoke-run on staging               (auto)
+#   Manual dispatch  -> deploy to prod                              (BLOCKED until
+#                                                                   the `prod` GH
+#                                                                   Environment
+#                                                                   reviewer approves)
+#
+# Once code is deployed, the mlops Databricks job runs end-to-end without a
+# per-run human gate. Automated quality gates inside the job:
+#   - fairness check (09_explainability_fairness) — halts the DAG on bias
+#   - challenger validation (04_challenger_validation) — promotes to
+#     @Champion only on full pass (metrics + fairness + business KPI)
+#
+# The "should this code reach prod?" decision lives HERE, in the prod
+# Environment reviewer assignment. Configure in
+# GitHub Settings -> Environments -> prod -> Required reviewers.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "databricks.yml"
+      - "resources/**"
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/databricks-cicd.yml"
+  push:
+    branches: [main]
+    paths:
+      - "databricks.yml"
+      - "resources/**"
+      - "src/**"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Bundle target to deploy"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+
+jobs:
+  # ------------------------------------------------------------------
+  # CI: lint + unit tests. Runs on every PR. No Databricks creds needed.
+  # ------------------------------------------------------------------
+  lint-and-test:
+    name: Lint + unit tests
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install test deps
+        run: pip install -e ".[test]"
+      - name: Ruff lint
+        run: ruff check src/lib tests
+      - name: Pytest
+        run: pytest tests/ -v
+
+  # ------------------------------------------------------------------
+  # PR check: bundle validates against staging credentials.
+  # ------------------------------------------------------------------
+  validate-staging:
+    name: Validate bundle (staging)
+    if: github.event_name == 'pull_request'
+    # Self-hosted runner (label fsi-fraud-cicd) registered on a host inside
+    # the workspace IP ACL — see scripts/setup-self-hosted-runner.md.
+    runs-on: [self-hosted, fsi-fraud-cicd]
+    needs: lint-and-test
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_STAGING }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_STAGING }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - run: databricks bundle validate --target staging
+
+  # ------------------------------------------------------------------
+  # On merge to main: deploy + smoke-run the staging bundle.
+  # ------------------------------------------------------------------
+  deploy-staging:
+    name: Deploy to staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, fsi-fraud-cicd]
+    needs: lint-and-test
+    environment:
+      # No reviewer required on staging — see GitHub Settings -> Environments
+      name: staging
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_STAGING }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_STAGING }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - run: databricks bundle validate --target staging
+      - run: databricks bundle deploy --target staging
+      - name: Trigger mlops job (staging smoke run)
+        run: databricks bundle run fsi_fraud_mlops --target staging
+
+  # ------------------------------------------------------------------
+  # Manual dispatch: deploy to prod, gated by the `prod` Environment
+  # reviewer. THIS is the human-in-the-loop approval for releases.
+  # ------------------------------------------------------------------
+  deploy-prod:
+    name: Deploy to prod (manual approval)
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'prod'
+    runs-on: [self-hosted, fsi-fraud-cicd]
+    environment:
+      # Configure in GitHub Settings -> Environments -> prod -> Required reviewers
+      name: prod
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_PROD }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - run: databricks bundle validate --target prod
+      - run: databricks bundle deploy --target prod
+      # Deploy only — do NOT auto-trigger the prod mlops job. The on-call
+      # triggers fsi_fraud_mlops in the prod workspace on the normal cadence.
+      # All automated quality gates run inside that job (fairness + metric +
+      # business KPI). The human decision was already made when the prod
+      # Environment reviewer approved this deploy above.

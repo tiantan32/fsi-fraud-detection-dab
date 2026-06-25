@@ -28,7 +28,7 @@ resources:
       environments:
         - environment_key: serverless_env
           spec:
-            client: "4"
+            client: "5"
 
     # =========================================================================
     # Job 2: MLOps Pipeline
@@ -36,6 +36,21 @@ resources:
     fsi_fraud_mlops:
       name: "fsi_fraud_mlops_${bundle.target}"
       max_concurrent_runs: 1
+      # Notify the model owner on any failure or sustained run. Email goes to
+      # the bundle owner; can be overridden per target with a distribution list.
+      email_notifications:
+        on_failure:
+          - tian.tan@databricks.com
+        on_duration_warning_threshold_exceeded:
+          - tian.tan@databricks.com
+        no_alert_for_skipped_runs: true
+      notification_settings:
+        no_alert_for_canceled_runs: true
+        no_alert_for_skipped_runs: true
+      tags:
+        cost_center: fsi_fraud
+        owner: tian.tan@databricks.com
+        managed_by: dabs
       tasks:
         - task_key: feature_engineering
           max_retries: 0
@@ -59,10 +74,25 @@ resources:
               volume_name: ${var.volume_name}
           environment_key: serverless_env
 
-        - task_key: register_model
+        # SHAP explainability + subgroup fairness — runs BEFORE registration
+        # so a biased model never enters the UC registry. Halts the DAG if
+        # the fairness gate fails.
+        - task_key: explainability_fairness
           max_retries: 0
           depends_on:
             - task_key: model_training
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/09_explainability_fairness.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+        - task_key: register_model
+          max_retries: 0
+          depends_on:
+            - task_key: explainability_fairness
           notebook_task:
             notebook_path: ../src/04-Data-Science-ML/03_model_registration.py
             base_parameters:
@@ -71,6 +101,10 @@ resources:
               volume_name: ${var.volume_name}
           environment_key: serverless_env
 
+        # Full automated validation (metrics + fairness + business KPI).
+        # On full pass, promotes to @Champion. The human-in-the-loop gate
+        # lives at the GitHub Actions `prod` Environment (deploy approval);
+        # within the deployed bundle the job runs end-to-end autonomously.
         - task_key: validate_model
           max_retries: 0
           depends_on:
@@ -122,7 +156,7 @@ resources:
       environments:
         - environment_key: serverless_env
           spec:
-            client: "4"
+            client: "5"
 
     # =========================================================================
     # Job 3: Monitoring & Retraining (Scheduled)
@@ -184,10 +218,23 @@ resources:
               volume_name: ${var.volume_name}
           environment_key: serverless_env
 
-        - task_key: reregister_model
+        # Fairness check first — so a biased retrained model never reaches UC.
+        - task_key: reexplain_model
           max_retries: 0
           depends_on:
             - task_key: retrain_model
+          notebook_task:
+            notebook_path: ../src/04-Data-Science-ML/09_explainability_fairness.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume_name: ${var.volume_name}
+          environment_key: serverless_env
+
+        - task_key: reregister_model
+          max_retries: 0
+          depends_on:
+            - task_key: reexplain_model
           notebook_task:
             notebook_path: ../src/04-Data-Science-ML/03_model_registration.py
             base_parameters:
@@ -211,4 +258,4 @@ resources:
       environments:
         - environment_key: serverless_env
           spec:
-            client: "4"
+            client: "5"

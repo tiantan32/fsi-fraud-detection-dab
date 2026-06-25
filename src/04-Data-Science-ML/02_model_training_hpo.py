@@ -262,9 +262,28 @@ def optuna_hpo_fn(n_trials, X_train, Y_train, X_test, Y_test, training_set_specs
             study_name=run_name,
         )
 
-        # Optimize
+        # Distributed HPO strategy
+        # ------------------------
+        # On SERVERLESS compute (V5+), there are no Spark executors that joblib
+        # can fan trials out to — serverless is a single-driver runtime by
+        # design. We therefore use driver-side multi-process parallelism
+        # (n_jobs=-1 fans across the driver's cores).
+        #
+        # On CLASSIC compute with a multi-node Spark cluster, registering
+        # joblib-spark would fan each Optuna trial out as a Spark task — but
+        # serverless's immutable-package-constraints.txt rejects joblib-spark
+        # at install time, so we can't even import it conditionally. The
+        # canonical "distributed HPO" pattern for Databricks on serverless is
+        # Ray on Databricks (see follow-ups in README).
         objective_fn = ObjectiveOptuna(X_train, Y_train, preprocessor_in, rng_seed_in)
-        study.optimize(objective_fn, n_trials=n_trials, n_jobs=n_jobs, callbacks=[mlflow_callback])
+        study.optimize(
+            objective_fn,
+            n_trials=n_trials,
+            n_jobs=n_jobs,
+            callbacks=[mlflow_callback],
+        )
+        mlflow.set_tag("hpo_backend", "driver-multiprocess")
+        print(f"HPO ran with driver-side parallelism (n_jobs={n_jobs}, {n_trials} trials).")
 
         # Log best trial info to parent run
         mlflow.log_params({
@@ -318,12 +337,43 @@ def optuna_hpo_fn(n_trials, X_train, Y_train, X_test, Y_test, training_set_specs
             evaluator_config={"log_model_explainability": True, "metric_prefix": "test_", "pos_label": 1},
         )
 
-        # Log model with Feature Store for serving-time feature lookups
+        # Log model with Feature Store for serving-time feature lookups.
+        # Use cloudpickle: skops (the new mlflow.sklearn default) refuses to
+        # round-trip pipelines containing lambdas / xgboost.Booster as
+        # "untrusted types", which breaks log_model on this preprocessor.
+        # Pin pip_requirements explicitly so the serving image build doesn't
+        # try to resolve against DBR's bleeding-edge pandas/numpy.
+        # NOTE: do NOT include databricks-feature-engineering — fe.log_model
+        # auto-injects databricks-feature-lookup and the two conflict.
+        import sklearn, lightgbm, xgboost, cloudpickle  # noqa: F401
+        pip_requirements = [
+            f"mlflow=={mlflow.__version__}",
+            f"scikit-learn=={sklearn.__version__}",
+            f"lightgbm=={lightgbm.__version__}",
+            f"xgboost=={xgboost.__version__}",
+            "numpy>=1.26,<2",
+            "pandas>=2.1,<3",
+            "cloudpickle",
+        ]
         fe.log_model(
             model=model_pipeline,
             artifact_path="model",
             flavor=mlflow.sklearn,
             training_set=training_set_specs_in,
+            serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
+            pip_requirements=pip_requirements,
+        )
+        # ALSO log the raw sklearn pipeline at a separate artifact path so the
+        # explainability notebook can load it as sklearn flavor and introspect
+        # the fitted classifier for SHAP. fe.log_model wraps the model in a
+        # feature-store pyfunc, which hides the sklearn flavor and breaks
+        # `mlflow.sklearn.load_model("runs:/<id>/model")`. The "raw_model"
+        # artifact is ONLY for explainability — never served, never promoted.
+        mlflow.sklearn.log_model(
+            sk_model=model_pipeline,
+            artifact_path="raw_model",
+            serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
+            pip_requirements=pip_requirements,
         )
         mlflow.end_run()
 
