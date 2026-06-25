@@ -13,7 +13,9 @@ resources:
       continuous: false
       channel: PREVIEW
       edition: ADVANCED
-      photon: false
+      # `photon` is mandatory (and auto-enabled) on serverless compute.
+      # Setting it to false explicitly is rejected:
+      #   "You cannot disable Photon when using serverless compute" (400)
       serverless: true
       libraries:
         - notebook:
