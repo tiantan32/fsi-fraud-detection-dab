@@ -61,8 +61,38 @@ else:
 
 # COMMAND ----------
 
-# Publish feature table to online store
-print(f"Publishing feature table to online store...")
+# Publish feature table to online store.
+#
+# We use publish_mode="SNAPSHOT" — a one-shot full copy of the current Delta
+# state. No ongoing sync, no streaming costs. The serving endpoint queries
+# this snapshot at request time.
+#
+# IMPORTANT: SNAPSHOT does NOT auto-update when the source Delta table is
+# rewritten. So we drop-if-exists before re-publishing — each deploy_serving
+# run creates a FRESH snapshot of whatever's currently in fraud_feature_table.
+# Without this, a stale snapshot from a prior run would silently keep
+# serving old data.
+#
+# Also covers: the orphan-table-after-drop+recreate bug we hit when
+# 01_feature_engineering used to drop the source. That's now fixed in 01
+# (idempotent get-or-create) so the source_table_id is stable.
+from databricks.sdk import WorkspaceClient as _WC
+_w = _WC()
+online_table_full = f"{catalog}.{db}.fraud_feature_table_online"
+
+# Drop the existing synced table (and let the underlying Postgres table
+# get cleaned up) so the publish below creates a fresh snapshot. Catch
+# both UC-level and synced-table-level "not found" so first-run is fine.
+print(f"Dropping any existing synced table {online_table_full} for a fresh snapshot...")
+try:
+    _w.api_client.do("DELETE", f"/api/2.0/database/synced_tables/{online_table_full}")
+    print(f"  deleted synced table {online_table_full}")
+    time.sleep(10)  # give Lakebase a moment to clean up the Postgres-side table
+except Exception as e:
+    print(f"  no existing synced table to drop ({type(e).__name__}: {str(e)[:120]})")
+
+# Take a fresh SNAPSHOT of the current source Delta state.
+print(f"Publishing feature table to online store (SNAPSHOT mode)...")
 max_retries = 5
 retry_count = 0
 while retry_count < max_retries:
@@ -70,20 +100,57 @@ while retry_count < max_retries:
         publish_state = fe.publish_table(
             online_store=online_store,
             source_table_name=f"{catalog}.{db}.fraud_feature_table",
-            online_table_name=f"{catalog}.{db}.fraud_feature_table_online",
-            publish_mode="TRIGGERED",
+            online_table_name=online_table_full,
+            publish_mode="SNAPSHOT",
         )
-        print(f"Published successfully")
+        print(f"Published successfully: {publish_state}")
         break
     except Exception as e:
-        if "feature sync is currently in progress" in str(e):
-            print("Feature sync in progress, retrying...")
+        msg = str(e)
+        if "feature sync is currently in progress" in msg or "already exists" in msg.lower():
+            print(f"Transient publish error, retrying... ({msg[:120]})")
             retry_count += 1
-            time.sleep(10)
+            time.sleep(15)
         else:
             raise e
 else:
-    print("Failed to publish after multiple retries.")
+    raise Exception("Failed to publish after multiple retries.")
+
+# Wait for the SNAPSHOT to actually finish copying before updating serving
+# endpoint. The serving endpoint validates online-store readiness; if we
+# update it before the snapshot is done we'd get
+#   "No suitable online store found for feature table ..."
+print("Waiting for SNAPSHOT to complete...")
+source_delta_version = spark.sql(
+    f"DESCRIBE HISTORY {catalog}.{db}.fraud_feature_table LIMIT 1"
+).first()["version"]
+print(f"Source Delta version captured by snapshot: {source_delta_version}")
+
+deadline = time.time() + 30 * 60  # 30 min cap
+while time.time() < deadline:
+    try:
+        st = _w.api_client.do(
+            "GET",
+            f"/api/2.0/database/synced_tables/{online_table_full}",
+        )
+    except Exception as e:
+        print(f"  synced-table not yet readable ({type(e).__name__}); retrying...")
+        time.sleep(15)
+        continue
+    sync_status = st.get("data_synchronization_status") or {}
+    last = sync_status.get("last_sync") or {}
+    synced_version = (last.get("delta_table_sync_info") or {}).get("delta_commit_version", -1)
+    detailed = sync_status.get("detailed_state", "")
+    print(f"  synced_version={synced_version}  detailed_state={detailed}")
+    if synced_version >= source_delta_version and "ONLINE_NO_PENDING_UPDATE" in detailed:
+        print("SNAPSHOT is complete.")
+        break
+    time.sleep(15)
+else:
+    raise Exception(
+        f"SNAPSHOT did not reach source version {source_delta_version} within 30 min. "
+        f"Serving endpoint would fail with 'no suitable online store found'."
+    )
 
 # COMMAND ----------
 

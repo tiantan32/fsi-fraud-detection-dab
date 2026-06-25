@@ -116,8 +116,11 @@ try:
     fairness_passed = dbutils.jobs.taskValues.get(
         taskKey="explainability_fairness", key="fairness_passed"
     )
-    worst_di = dbutils.jobs.taskValues.get(
-        taskKey="explainability_fairness", key="worst_disparate_impact_ratio"
+    calibration_di = dbutils.jobs.taskValues.get(
+        taskKey="explainability_fairness", key="calibration_di_ratio"
+    )
+    raw_di = dbutils.jobs.taskValues.get(
+        taskKey="explainability_fairness", key="raw_di_ratio"
     )
     client.set_model_version_tag(
         model_name, model_details.version,
@@ -125,12 +128,19 @@ try:
     )
     client.set_model_version_tag(
         model_name, model_details.version,
-        "Worst_Disparate_Impact", str(worst_di),
+        "Calibration_DI_Ratio", str(calibration_di),
+    )
+    client.set_model_version_tag(
+        model_name, model_details.version,
+        "Raw_DI_Ratio", str(raw_di),
     )
     client.set_model_version_tag(
         model_name, model_details.version, "Explainability", "SHAP",
     )
-    print(f"Stamped fairness tags: Fairness_Check={fairness_passed}, Worst_DI={worst_di}")
+    print(
+        f"Stamped fairness tags: Fairness_Check={fairness_passed}, "
+        f"Calibration_DI={calibration_di}, Raw_DI={raw_di}"
+    )
 except Exception as e:
     # If the explainability task didn't set values (e.g. interactive registration),
     # mark fairness as Missing so validate_model can refuse to promote.

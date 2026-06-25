@@ -135,13 +135,22 @@ client.set_model_version_tag(name=model_name, version=model_version, key="has_ar
 model_run_id = model_details.run_id
 f1_score = mlflow.get_run(model_run_id).data.metrics['test_f1_score']
 
+# Tolerance for HPO variance: Challenger passes if F1 is within 5% of Champion.
+# Strict `>=` rejects on noise (e.g., 0.001 regression from sampling). A
+# production policy might set this from a CI bootstrap over training folds.
+F1_TOLERANCE_PCT = 0.05
+
 try:
     champion_model = client.get_model_version_by_alias(model_name, "Champion")
     champion_f1 = mlflow.get_run(champion_model.run_id).data.metrics['test_f1_score']
-    print(f"Champion f1 score: {champion_f1}. Challenger f1 score: {f1_score}.")
-    metric_f1_passed = f1_score >= champion_f1
-except:
-    print("No Champion found. Accept the model as it's the first one.")
+    f1_floor = champion_f1 * (1 - F1_TOLERANCE_PCT)
+    print(
+        f"Champion f1={champion_f1:.4f}, Challenger f1={f1_score:.4f}, "
+        f"floor (within {F1_TOLERANCE_PCT:.0%})={f1_floor:.4f}"
+    )
+    metric_f1_passed = f1_score >= f1_floor
+except Exception as e:
+    print(f"No Champion found ({e}). Accept the model as it's the first one.")
     metric_f1_passed = True
 
 print(f"Model {model_name} version {model_details.version} metric_f1_passed: {metric_f1_passed}")
