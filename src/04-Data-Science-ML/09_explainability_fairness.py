@@ -119,11 +119,13 @@ print(f"Explainability sample: {len(explain_pdf)} rows")
 
 # COMMAND ----------
 
-# Load the sklearn pipeline directly from the training run so we can introspect
-# the fitted classifier. `models:/<name>@Challenger` would only give us a
-# pyfunc wrapper, which hides the underlying estimator from SHAP.
-loaded_pyfunc = mlflow.pyfunc.load_model(f"runs:/{run_id}/model")
-sklearn_pipeline = mlflow.sklearn.load_model(f"runs:/{run_id}/model")
+# Load the sklearn pipeline from the dedicated "raw_model" artifact that
+# 02_model_training_hpo logs alongside the feature-store model. The "model"
+# artifact is feature-store-wrapped (pyfunc) and `mlflow.sklearn.load_model`
+# refuses it with `Model does not have the "sklearn" flavor`. The "raw_model"
+# artifact is unwrapped sklearn flavor, only used here for SHAP introspection
+# — never served, never promoted.
+sklearn_pipeline = mlflow.sklearn.load_model(f"runs:/{run_id}/raw_model")
 preprocessor = sklearn_pipeline.named_steps["preprocessor"]
 classifier = sklearn_pipeline.named_steps["classifier"]
 clf_name = type(classifier).__name__

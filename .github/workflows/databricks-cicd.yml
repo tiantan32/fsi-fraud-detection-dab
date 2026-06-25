@@ -1,6 +1,36 @@
 name: fsi-fraud-detection CI/CD
 
-# This workflow IS the human-in-the-loop approval gate for production.
+# IMPORTANT — Runner choice for Databricks IP ACL
+# ===============================================
+# `fe-vm-ttan-vm.cloud.databricks.com` has a workspace IP ACL that blocks
+# generic GitHub-hosted runners (vanilla `runs-on: ubuntu-latest`). The FE
+# workspace allowlist only includes:
+#   - Databricks VPN
+#   - Databricks IT-managed GitHub runners
+#   - Other demo workspaces
+#   - Serverless control/data planes
+#
+# There are 3 ways to make this CI workflow work against the workspace:
+#
+#  A) **Move the repo into the `databricks-field-eng` GitHub org** (best path
+#     for real customer demos) and switch to:
+#         runs-on:
+#           group: databricks-field-eng-protected-runner-group
+#           labels: linux-ubuntu-latest
+#     IT-managed runners are pre-approved by FE's IP ACL.
+#
+#  B) **Register a self-hosted runner** on a host that's already on the
+#     allowlist (your Mac on Databricks VPN, or a small VM). Then use
+#     `runs-on: self-hosted`. Setup steps in scripts/setup-self-hosted-runner.md.
+#
+#  C) **Don't talk to the workspace from CI at all**: keep CI scoped to
+#     lint+pytest (no creds needed), and run `databricks bundle deploy`
+#     manually from your laptop. Cheapest, least automated.
+#
+# The jobs below are written for OPTION B (self-hosted) since this repo is
+# at github.com/tiantan32 (personal, not in the databricks org). If you
+# move the repo to databricks-field-eng later, swap the runs-on stanza to
+# the option-A version above.
 #
 # Gates:
 #   PR open/update  -> lint + pytest + bundle validate on staging   (no deploy)
@@ -72,7 +102,9 @@ jobs:
   validate-staging:
     name: Validate bundle (staging)
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    # Self-hosted because GitHub-hosted IPs are blocked by FE workspace IP ACL.
+    # See header comment for options A (org runners), B (this), and C (no CI).
+    runs-on: [self-hosted, fsi-fraud-cicd]
     needs: lint-and-test
     env:
       DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_STAGING }}
@@ -88,7 +120,7 @@ jobs:
   deploy-staging:
     name: Deploy to staging
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, fsi-fraud-cicd]
     needs: lint-and-test
     environment:
       # No reviewer required on staging — see GitHub Settings -> Environments
@@ -111,7 +143,7 @@ jobs:
   deploy-prod:
     name: Deploy to prod (manual approval)
     if: github.event_name == 'workflow_dispatch' && inputs.target == 'prod'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, fsi-fraud-cicd]
     environment:
       # Configure in GitHub Settings -> Environments -> prod -> Required reviewers
       name: prod

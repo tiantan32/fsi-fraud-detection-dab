@@ -363,6 +363,18 @@ def optuna_hpo_fn(n_trials, X_train, Y_train, X_test, Y_test, training_set_specs
             serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
             pip_requirements=pip_requirements,
         )
+        # ALSO log the raw sklearn pipeline at a separate artifact path so the
+        # explainability notebook can load it as sklearn flavor and introspect
+        # the fitted classifier for SHAP. fe.log_model wraps the model in a
+        # feature-store pyfunc, which hides the sklearn flavor and breaks
+        # `mlflow.sklearn.load_model("runs:/<id>/model")`. The "raw_model"
+        # artifact is ONLY for explainability — never served, never promoted.
+        mlflow.sklearn.log_model(
+            sk_model=model_pipeline,
+            artifact_path="raw_model",
+            serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
+            pip_requirements=pip_requirements,
+        )
         mlflow.end_run()
 
     return study
