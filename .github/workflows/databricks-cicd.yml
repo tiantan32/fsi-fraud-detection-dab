@@ -3,19 +3,22 @@ name: fsi-fraud-detection CI/CD
 # Runner choice for Databricks IP ACL
 # ===================================
 # This workflow targets `fe-vm-ttan-vm.cloud.databricks.com`, whose IP ACL
-# allows only Databricks VPN + IT-managed GitHub runners + serverless
-# control plane. Vanilla `runs-on: ubuntu-latest` (GitHub-hosted) is
-# blocked with HTTP 403.
+# blocks vanilla `ubuntu-latest` GitHub-hosted runners with HTTP 403.
 #
-# We use the FE org's IT-managed runner group (`databricks-field-eng-
-# protected-runner-group` / `linux-ubuntu-latest`), which is pre-approved
-# by the workspace ACL. This requires the repo to live in
-# `databricks-field-eng` (provisioned via Freshservice EMU GitHub catalog).
+# This repo lives in a personal namespace (`tiantan32/`), so the FE org's
+# IT-managed runner group (`databricks-field-eng-protected-runner-group`)
+# is NOT available here. We use a self-hosted runner with the label
+# `fsi-fraud-cicd`, registered on a host inside the workspace allowlist
+# (your Mac on Databricks VPN works).
 #
-# If you fork this to a personal-namespace repo (e.g. `tiantan32/...`),
-# the FE runner group will NOT be available — switch to a self-hosted
-# runner registered on a host that's on the workspace allowlist (your Mac
-# on VPN works). See scripts/setup-self-hosted-runner.md.
+# To switch to the FE IT-managed runners later (when the repo moves to
+# `databricks-field-eng`), replace each `runs-on: [self-hosted, fsi-fraud-cicd]`
+# with:
+#   runs-on:
+#     group: databricks-field-eng-protected-runner-group
+#     labels: linux-ubuntu-latest
+#
+# Self-hosted runner setup: see scripts/setup-self-hosted-runner.md.
 #
 # Gates:
 #   PR open/update  -> lint + pytest + bundle validate on staging   (no deploy)
@@ -87,10 +90,9 @@ jobs:
   validate-staging:
     name: Validate bundle (staging)
     if: github.event_name == 'pull_request'
-    # FE IT-managed runner group — pre-approved by the workspace IP ACL.
-    runs-on:
-      group: databricks-field-eng-protected-runner-group
-      labels: linux-ubuntu-latest
+    # Self-hosted runner (label fsi-fraud-cicd) registered on a host inside
+    # the workspace IP ACL — see scripts/setup-self-hosted-runner.md.
+    runs-on: [self-hosted, fsi-fraud-cicd]
     needs: lint-and-test
     env:
       DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_STAGING }}
@@ -106,9 +108,7 @@ jobs:
   deploy-staging:
     name: Deploy to staging
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on:
-      group: databricks-field-eng-protected-runner-group
-      labels: linux-ubuntu-latest
+    runs-on: [self-hosted, fsi-fraud-cicd]
     needs: lint-and-test
     environment:
       # No reviewer required on staging — see GitHub Settings -> Environments
@@ -131,9 +131,7 @@ jobs:
   deploy-prod:
     name: Deploy to prod (manual approval)
     if: github.event_name == 'workflow_dispatch' && inputs.target == 'prod'
-    runs-on:
-      group: databricks-field-eng-protected-runner-group
-      labels: linux-ubuntu-latest
+    runs-on: [self-hosted, fsi-fraud-cicd]
     environment:
       # Configure in GitHub Settings -> Environments -> prod -> Required reviewers
       name: prod
