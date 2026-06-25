@@ -210,18 +210,59 @@ print("Tags:", results.tags)
 
 # COMMAND ----------
 
-if metric_f1_passed and has_artifacts and has_description and predicts_check and business_metric_passed:
-    print(f"Registering model {model_name} Version {model_version} as Champion!")
+# Pull the fairness tag set upstream by 09_explainability_fairness. If the
+# task didn't run yet (e.g. first deploy), treat as Failed so the gate does
+# not silently waive bias review.
+_fairness_tag = client.get_model_version(model_name, model_version).tags.get("Fairness_Check", "Missing")
+fairness_passed = (_fairness_tag.lower() == "passed")
+print(f"Fairness_Check tag = {_fairness_tag}  fairness_passed = {fairness_passed}")
+
+all_automated_checks_passed = (
+    metric_f1_passed and has_artifacts and has_description
+    and predicts_check and business_metric_passed
+    and fairness_passed
+)
+
+# The human-in-the-loop gate is at the GitHub Actions level (the `prod`
+# Environment requires reviewer sign-off before bundle deploy). Inside the
+# deployed bundle, the mlops job runs end-to-end autonomously: if all
+# automated checks pass (metrics + fairness + business KPI), promote to
+# Champion. If any check fails, halt the DAG so deploy_serving / batch
+# inference do not get the new model.
+if all_automated_checks_passed:
+    print(f"All automated checks passed. Promoting {model_name} v{model_version} to @Champion.")
     client.set_registered_model_alias(
-        name=model_name,
-        alias="Champion",
-        version=model_version,
+        name=model_name, alias="Champion", version=model_version,
     )
-    client.set_model_version_tag(name=model_name, version=model_details.version, key="Approval_Check", value="Approved")
+    client.set_model_version_tag(
+        name=model_name, version=model_details.version,
+        key="Approval_Check", value="Approved",
+    )
+    # Stamp who/when for audit lineage. The "who" is the service principal
+    # in prod (the job's run_as), which is exactly what regulators want to
+    # see paired with the GH Action approver in the deploy log.
+    import time
+    current_user = spark.sql("SELECT current_user()").first()[0]
+    client.set_model_version_tag(
+        name=model_name, version=model_details.version,
+        key="Promoted_To_Champion_By", value=current_user,
+    )
+    client.set_model_version_tag(
+        name=model_name, version=model_details.version,
+        key="Promoted_At_Epoch_S", value=str(int(time.time())),
+    )
 
 else:
-    client.set_model_version_tag(name=model_name, version=model_details.version, key="Approval_Check", value="Failed")
-    raise Exception(f"Model v{model_version} REJECTED: description={has_description}, predicts={predicts_check}, artifacts={has_artifacts}, f1={metric_f1_passed}, business={business_metric_passed}")
+    client.set_model_version_tag(
+        name=model_name, version=model_details.version,
+        key="Approval_Check", value="Failed",
+    )
+    raise Exception(
+        f"Model v{model_version} REJECTED: description={has_description}, "
+        f"predicts={predicts_check}, artifacts={has_artifacts}, "
+        f"f1={metric_f1_passed}, business={business_metric_passed}, "
+        f"fairness={fairness_passed}"
+    )
 
 # COMMAND ----------
 

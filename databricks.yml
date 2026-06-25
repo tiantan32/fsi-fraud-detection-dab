@@ -12,8 +12,11 @@ variables:
     description: Volume name for raw data storage
     default: fraud_raw_data
   warehouse_id:
-    description: SQL Warehouse ID for dashboard queries
+    description: SQL Warehouse ID used by the dbt task and dashboard queries
     default: ""
+  dbt_schema:
+    description: Schema (database) for dbt-materialized tables
+    default: fsi_fraud_detection_dbt
 
 workspace:
   root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
@@ -30,17 +33,25 @@ targets:
   dev:
     mode: development
     default: true
+    workspace:
+      host: https://fe-vm-ttan-vm.cloud.databricks.com
     variables:
       catalog: ttan_demo_catalog_main
       schema: fsi_fraud_detection
+      warehouse_id: 11d6beea79229431
+      dbt_schema: fsi_fraud_detection_dbt
 
   staging:
+    workspace:
+      host: https://fe-vm-ttan-vm.cloud.databricks.com
     variables:
       catalog: ttan_demo_catalog_main
       schema: fsi_fraud_detection_staging
 
   prod:
     mode: production
+    workspace:
+      host: https://fe-vm-ttan-vm.cloud.databricks.com
     variables:
       catalog: ttan_demo_catalog_main
       schema: fsi_fraud_detection
